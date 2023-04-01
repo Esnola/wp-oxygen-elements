@@ -1,12 +1,16 @@
 var lazyImageObserver;
-		
-jQuery( document ).ready(function($) {
-	
+
+function documentReady(fn) {
+  if (document.readyState != 'loading'){ fn(); }
+  else { document.addEventListener('DOMContentLoaded', fn); }
+}
+
+documentReady(function() {
+	// Lazy load
 	lazyImageObserver = new IntersectionObserver(function(entries, observer) {
 		entries.forEach(function(entry) {
 			if (entry.isIntersecting) {
-				
-				if (!entry.target.classList.contains('fadeIn')) {
+				if (!entry.target.classList.contains('woe-fadeIn')) {
 					let lazyImage = entry.target.getElementsByTagName('img')[0];
 
 					lazyImage.src = lazyImage.dataset.src;
@@ -15,77 +19,98 @@ jQuery( document ).ready(function($) {
 					lazyImage.removeAttribute('data-src');
 					lazyImage.removeAttribute('data-srcset');
 
-					entry.target.classList.remove('lazy');
+					entry.target.classList.remove('woe-lazy');
 					lazyImageObserver.unobserve(entry.target);
 
-					entry.target.classList.add('fadeIn');
-					entry.target.classList.remove('loading');
+					entry.target.classList.add('woe-fadeIn');
+					entry.target.classList.remove('woe-loading');
 				}
 
 			}
 		});
 	});
-	
-	// On button change
-	$('.posts-filter').change(function(){
-		sendAJAX();
-		return false;
+
+	// Infinite Scroll
+	let last_known_scroll_position = 0;
+	let ticking = false;
+	document.addEventListener('scroll', function(e) {
+	  last_known_scroll_position = window.scrollY;
+
+	  if (!ticking) {
+		window.requestAnimationFrame(function() {
+		  if (infiniteScroll() == false) {
+			return;
+		  }
+		  ticking = false;
+		});
+
+		ticking = true;
+	  }
 	});
 
-	// On load
-	sendAJAX();
-	return false;
+	// On filter change
+	document.querySelectorAll('.woe-posts-filter').forEach(e =>
+		e.addEventListener('change', (event) => {
+			sendAJAX();
+	}));
+
+	// On initial load
+	var checkExist = setInterval(function() {
+		if (document.getElementById('filterForm') && document.getElementById('filterForm').length) {
+			sendAJAX();
+			clearInterval(checkExist);
+		}
+	}, 100);
 });
 
-function load_more() {
-	const loadMore = document.querySelector('#load_more');
-	
-	data = {
-		paged: loadMore.dataset.nextPage
-	}
-	
+function loadMore() {
+	disableLoadMore(true);
+
+	const loadMore = document.querySelector('.woe-posts__load-more');
+	const data = { 
+		paged: loadMore.dataset.nextPage 
+	};
+
 	sendAJAX(data);
 }
 		
 function sendAJAX(loadMoreData) {
-	var filter = jQuery('#filter');
-	var data = filter.serialize();
 	
-	if (loadMoreData) {
-		var data = data + '&' +  jQuery.param(loadMoreData);
+	if (!loadMoreData) {
+		var containers = document.getElementsByClassName('woe-post');
+		for (let container of containers) {
+			container.classList.add('woe-fadeOut');
+		}
 	}
 	
-	jQuery.ajax({
-		url:filter.attr('action'),
-		data:data,
-		type:filter.attr('method'),
-		startTime:new Date().getTime(),
-		beforeSend:function(xhr){
-			disableButtons();
-			
-			if (!loadMoreData) {
-				jQuery('.post-container').addClass('fadeOut');
-			}
-		},
-		success:function(data){
+	var filter = document.getElementById('filterForm');
+	var request = new XMLHttpRequest();
+	request.open(filter.attributes.method.textContent, filter.attributes.action.textContent, true);
+	request.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+	
+	var startTime = new Date().getTime();
+	
+	request.onload = function () {
+		if (this.status >= 200 && this.status < 400) { // Sucess
+
 			var endTime = new Date().getTime();
-			var totalTime = endTime - this.startTime;
+			var totalTime = endTime - startTime;
 			var timeToWait = 0;
-			
-			if (totalTime >= 400) { 
-				timeToWait = 0; 
-			} else {
-				timeToWait = 400 - totalTime; 
-			}
+
+			if (totalTime >= 400) { timeToWait = 0; } 
+			else { timeToWait = 400 - totalTime; }
+
+			var response = this.response;
 
 			setTimeout(function(){
-				
+
 				if (loadMoreData) {
-					jQuery('.posts').append(data);
+					document.getElementsByClassName('woe-posts')[0].insertAdjacentHTML('beforeend', response);
 					incrementLoadMore();
 					disableLoadMore(false);
 				} else {
-					jQuery('#response').html(data);
+					var responseContainer = document.getElementById('woe-response');
+					responseContainer.innerHTML = response;
 				}
 				
 				updateObserver();
@@ -95,61 +120,85 @@ function sendAJAX(loadMoreData) {
 				}, 800);
 				
 			}, timeToWait);
-			
+
+		} else {
+			console.error("Request Failed: Response Error");
 		}
-	});
+	};
+	request.onerror = function() {
+		console.error("Request Failed: Connection Error");
+	};
+	
+	var data = new FormData(filter);
+	var queryString = new URLSearchParams(data).toString();
+
+	if (loadMoreData) {
+		url = Object.keys(loadMoreData).map(function(k) { return encodeURIComponent(k) + '=' + encodeURIComponent(loadMoreData[k]) }).join('&')
+		queryString += '&' +  url;
+	}
+
+	disableButtons();
+	request.send(queryString);
 }
 
 function updateObserver() {
-	let lazyImages = [].slice.call(document.querySelectorAll('.post-container'));
-	lazyImages.forEach(function(lazyImage) {
-		lazyImageObserver.observe(lazyImage);
-	});
+	const lazyImages = [].slice.call(document.querySelectorAll('.woe-post'));
+	lazyImages.forEach(function(lazyImage) { lazyImageObserver.observe(lazyImage); });
 } 
 
 function disableButtons() {
-	jQuery('.radio-toolbar label').css('opacity', '0.5');
-	jQuery('.radio-toolbar label').css('cursor', 'default');
-	jQuery('.posts-filter').attr('disabled', true);
+	const buttons = document.querySelectorAll('.woe-radio-toolbar label');
+	buttons.forEach(function(e) { e.classList.add('disabled'); });
+
+	const filters = document.querySelectorAll('.woe-posts-filter');
+	filters.forEach(function(e) { e.disabled = true; });
 }
 
 function enableButtons() {
-	jQuery('.radio-toolbar label').css('opacity', '1.0');
-	jQuery('.radio-toolbar label').css('cursor', 'pointer');
-	jQuery('.posts-filter').attr('disabled', false);
+	const buttons = document.querySelectorAll('.woe-radio-toolbar label');
+	buttons.forEach(function(e) { e.classList.remove('disabled'); });
+
+	const filters = document.querySelectorAll('.woe-posts-filter');
+	filters.forEach(function(e) { e.disabled = false; });
 }
 
 function incrementLoadMore() {
-	const loadMore = document.querySelector('#load_more');
+	const loadMore = document.querySelector('.woe-posts__load-more');
 	loadMore.dataset.currentPage++;
 	loadMore.dataset.nextPage++;
-	
+
 	if (loadMore.dataset.currentPage == loadMore.dataset.maxPage) {
-		jQuery('#load_more').css('visibility', 'hidden');
+		loadMore.style.visibility = 'hidden';
 	}
 }
 
-jQuery( document ).on('scroll', function(e) {
-	var isInfinite = jQuery('input[name=infinite_scroll]').val() === 'true';
-
-	if (isInfinite) {
-
-		var loadMoreButton = document.getElementById("load_more");
-
-		var isDisabled = loadMoreButton.disabled;
-		var isHidden = loadMoreButton.style.visibility === 'hidden';
-
-		var offsetTop = (loadMoreButton.getBoundingClientRect().top + document.documentElement.scrollTop);
-
-		if( (jQuery(this).scrollTop() + jQuery(window).height() ) >= offsetTop && !isDisabled && !isHidden){
-			disableLoadMore(true);
-			var event = document.createEvent('HTMLEvents');
-			event.initEvent('click', true, false);
-			loadMoreButton.dispatchEvent(event);
+function infiniteScroll() {
+	const isInfinite = document.querySelector('input[name=infinite_scroll]');
+	
+	if (isInfinite && isInfinite.value === 'true') {
+		var loadMoreButton = document.getElementsByClassName("woe-posts__load-more")[0];
+		
+		if (loadMoreButton) {
+			const isDisabled = loadMoreButton.disabled;
+			const isHidden = loadMoreButton.style.visibility === 'hidden';
+			const offsetTop = (loadMoreButton.getBoundingClientRect().top + document.documentElement.scrollTop);
+			
+			if( (document.scrollingElement.scrollTop + window.innerHeight ) >= offsetTop && !isDisabled && !isHidden){
+				disableLoadMore(true);
+				var event = document.createEvent('HTMLEvents');
+				event.initEvent('click', true, false);
+				loadMoreButton.dispatchEvent(event);
+			}
 		}
+	} else {
+		return false;
 	}
-});
+}
 
 function disableLoadMore(disabled) {
-	document.getElementById("load_more").disabled = disabled;
+	var loadMore = document.getElementsByClassName("woe-posts__load-more")[0];
+	loadMore.disabled = disabled;
+	
+	if (disabled) { loadMore.innerHTML = "Loading..."; } 
+	else { loadMore.innerHTML = "Load More"; }
 }
